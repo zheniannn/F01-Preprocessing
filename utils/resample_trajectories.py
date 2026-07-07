@@ -350,9 +350,14 @@ def process_day(date: str, input_path: str, output_dir: str, cfg: ResampleConfig
                 "accel_mps2": accel,
                 "accel_vector_mps2": accel_vector,
                 "turn_rate_deg_s": turn_rate,
+                # segment_* fields describe the PARENT stage-3 segment
+                # (provenance); trajectory_* fields describe THIS resampled
+                # subsegment and are what downstream stages should use.
                 "segment_start_time": first_row["segment_start_time"],
                 "segment_end_time": first_row["segment_end_time"],
                 "segment_duration_s": first_row["segment_duration_s"],
+                "trajectory_start_time": t_grid[0],
+                "trajectory_end_time": t_grid[-1],
                 "trajectory_duration_s": t_grid[-1] - t_grid[0],
                 "n_samples": n,
                 "was_split_by_interp_gap": was_split,
@@ -383,7 +388,8 @@ def process_day(date: str, input_path: str, output_dir: str, cfg: ResampleConfig
         cols += [f"{c}_interp" for c in reported_cols]
         cols += [
             "segment_start_time", "segment_end_time", "segment_duration_s",
-            "trajectory_duration_s", "n_samples", "was_split_by_interp_gap",
+            "trajectory_start_time", "trajectory_end_time", "trajectory_duration_s",
+            "n_samples", "was_split_by_interp_gap",
         ]
         cols += [c for c in metadata_cols if c != "callsign"]
         df_final = df_final[cols]

@@ -167,10 +167,11 @@ For each day (`utils/trajectory_prep.py::process_day`), in order:
 
 2. **Freshness filter** — rows with stale position updates are removed by
    requiring the position timestamp to be within 10 seconds of the
-   state-vector timestamp (`time − lastposupdate ≤ 10s`). OpenSky repeats
-   a stale `lat`/`lon` across multiple snapshots while `time` keeps
+   state-vector timestamp (`0 ≤ time − lastposupdate ≤ 10s`). OpenSky
+   repeats a stale `lat`/`lon` across multiple snapshots while `time` keeps
    advancing, so a large gap here means the row's position is old, not a
-   new observation.
+   new observation; a negative lag indicates a clock inconsistency and is
+   dropped too rather than passing silently.
 
 3. **Duplicate removal** — a separate repeated-state cleanup step, run
    right after the freshness filter but logically distinct from it: exact
@@ -189,13 +190,15 @@ For each day (`utils/trajectory_prep.py::process_day`), in order:
 
 6. **`assign_segments`** — segments are split primarily by aircraft identity
    and time gaps, with callsign changes used as an additional, more
-   conservative split criterion (blank/NaN callsigns are treated as equal to
-   each other, so missing callsigns never force a spurious split). A new
-   segment starts whenever:
+   conservative split criterion. A new segment starts whenever:
    - it's the aircraft's first point (a hard boundary), or
    - the time gap since the previous point exceeds `--gap-split` (default
      60s), or
-   - the callsign changed from the previous point.
+   - a real callsign differs from the aircraft's **last known** real
+     callsign. Blank ↔ real transitions never split — ADS-B callsign drops
+     out intermittently, and splitting on every dropout would shred
+     continuous flights — but a genuine change hiding behind a blank
+     stretch (N123 → blank → N456) still splits.
 
 7. **`remove_glitch_points`** — computes implied ground speed between
    consecutive points via haversine distance / time gap. A single GPS
@@ -327,10 +330,13 @@ For each day (`utils/resample_trajectories.py::process_day`), per `segment_id`:
    `segment_id`, `trajectory_id` = `{segment_id}_r{k}` for the k-th
    subsegment, `source_segment_id`), grid (`sample_idx`, `timestamp`,
    `dt_s`), positions, provenance (`is_interpolated`), motion quantities,
-   reported channels, and segment/trajectory metadata. Aircraft metadata
-   columns (`manufacturername`, `model`, `icaoaircrafttype`,
-   `registration`, `typecode`) are carried through when present in the
-   input.
+   reported channels, and segment/trajectory metadata. The inherited
+   `segment_start/end_time` fields describe the *parent stage-3 segment*
+   (provenance); `trajectory_start_time` / `trajectory_end_time` /
+   `trajectory_duration_s` describe *this resampled subsegment* and are
+   what downstream stages should use. Aircraft metadata columns
+   (`manufacturername`, `model`, `icaoaircrafttype`, `registration`,
+   `typecode`) are carried through when present in the input.
 
 After all days are processed, a **validation gate** runs and raises an
 error on failure. Hard checks are the genuinely independent ones: at least

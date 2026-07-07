@@ -116,10 +116,13 @@ def validate_columns(path: str) -> Tuple[str, Optional[str], Optional[str]]:
 
 
 def freshness_filter(df: pd.DataFrame) -> Tuple[pd.DataFrame, int]:
-    """Drop rows whose 'time' is more than FRESHNESS_MAX_LAG_S ahead of
-    'lastposupdate' -- OpenSky repeats a stale position across snapshots
-    while 'time' keeps advancing, so a large (time - lastposupdate) gap
-    means the row's lat/lon/altitude are old, not a new observation.
+    """Keep only rows where 0 <= time - lastposupdate <= FRESHNESS_MAX_LAG_S.
+
+    OpenSky repeats a stale position across snapshots while 'time' keeps
+    advancing, so a large positive lag means the row's lat/lon/altitude are
+    old, not a new observation. A NEGATIVE lag (position timestamp ahead of
+    the snapshot time) indicates a clock inconsistency and is dropped too
+    rather than passing silently.
 
     Skipped (no-op) if either column is absent -- we can't judge staleness
     without both. Returns (filtered_df, rows_removed).
@@ -127,8 +130,8 @@ def freshness_filter(df: pd.DataFrame) -> Tuple[pd.DataFrame, int]:
     if "time" not in df.columns or "lastposupdate" not in df.columns:
         return df, 0
     rows_before = len(df)
-    mask = (df["time"] - df["lastposupdate"]) <= FRESHNESS_MAX_LAG_S
-    filtered = df[mask]
+    lag = df["time"] - df["lastposupdate"]
+    filtered = df[(lag >= 0.0) & (lag <= FRESHNESS_MAX_LAG_S)]
     return filtered, rows_before - len(filtered)
 
 
@@ -205,9 +208,11 @@ def assign_segments(df: pd.DataFrame, timestamp_col: str, gap_split_s: float) ->
     SAME aircraft:
       1. it's the first point for that aircraft (a hard boundary), or
       2. the time gap since the previous point exceeds gap_split_s, or
-      3. the callsign changed (NaN/blank callsigns are treated as equal to
-         each other, but not equal to a real callsign) -- a callsign change
-         usually means a new flight leg even without a long ground gap.
+      3. a real callsign differs from the aircraft's last known real
+         callsign -- that usually means a new flight leg even without a
+         long ground gap. Blank <-> real is NOT a change: ADS-B callsign
+         drops out intermittently, and splitting on every dropout would
+         shred continuous flights.
 
     Adds 'segment_id' as f"{icao24}_{int(segment_start_time)}" (globally
     unique across days/aircraft) plus 'segment_start_time', 'segment_end_time',
@@ -225,9 +230,14 @@ def assign_segments(df: pd.DataFrame, timestamp_col: str, gap_split_s: float) ->
     if "callsign" in df.columns:
         callsign_norm = df["callsign"].astype(str).str.strip()
         callsign_norm = callsign_norm.where(~callsign_norm.str.lower().isin(["", "nan", "none"]), "")
-        prev_callsign = callsign_norm.groupby(df["icao24"]).shift(1)
-        # Two blanks are "equal" (no change); blank vs. real callsign IS a change.
-        is_callsign_change = (callsign_norm != prev_callsign) & is_new_aircraft.eq(False)
+        # Split only when a real callsign differs from the aircraft's LAST
+        # KNOWN real callsign. Blank <-> real transitions (intermittent ADS-B
+        # callsign dropout) never split, but a genuine change hiding behind a
+        # blank stretch (N123 -> blank -> N456) still does.
+        real = callsign_norm.where(callsign_norm != "")            # NaN where blank
+        prev_known = real.groupby(df["icao24"]).shift(1)
+        prev_known = prev_known.groupby(df["icao24"]).ffill()      # last real callsign before this row
+        is_callsign_change = real.notna() & prev_known.notna() & (real != prev_known)
     else:
         is_callsign_change = pd.Series(False, index=df.index)
 
