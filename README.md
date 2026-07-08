@@ -1,5 +1,7 @@
 # F01-Preprocessing
 
+> Part of the PLSWORK light-GA radar pipeline: [F01-Preprocessing](https://github.com/zheniannn/F01-Preprocessing) (stages 1-4) → [F02-Radar](https://github.com/zheniannn/F02-Radar) (stages 5-6) → [F03-Evaluation](https://github.com/zheniannn/F03-Evaluation) (stages 7-9).
+
 Four-stage preprocessing pipeline that turns the raw aircraft database and
 raw OpenSky ADS-B state-vector files into a homogeneous, filtered dataset of
 **conventional, light, fixed-wing General Aviation aircraft and their
